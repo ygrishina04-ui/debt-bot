@@ -1,6 +1,6 @@
 import os
 import tempfile
-import pandas as pd
+from openpyxl import load_workbook
 from flask import Flask, request
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
