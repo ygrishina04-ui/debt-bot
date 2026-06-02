@@ -5,6 +5,9 @@ import requests
 from openpyxl import load_workbook
 import gspread
 from google.oauth2.service_account import Credentials
+import smtplib
+from email.mime.text import MIMEText
+from email.header import Header
 
 app = Flask(__name__)
 
@@ -12,7 +15,21 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 GOOGLE_SHEET_ID = os.environ.get("GOOGLE_SHEET_ID")
 GOOGLE_SERVICE_ACCOUNT_EMAIL = os.environ.get("GOOGLE_SERVICE_ACCOUNT_EMAIL")
 GOOGLE_PRIVATE_KEY = os.environ.get("GOOGLE_PRIVATE_KEY")
+SMTP_HOST = os.environ.get("SMTP_HOST")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
 
+SMTP_USER = os.environ.get("SMTP_USER")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
+
+EMAIL_FROM = os.environ.get("EMAIL_FROM")
+EMAIL_FROM_NAME = os.environ.get("EMAIL_FROM_NAME", "ООО Инвиктика")
+
+EMAIL_SUBJECT = os.environ.get(
+    "EMAIL_SUBJECT",
+    "Информация о дебиторской задолженности"
+)
+
+COPY_EMAIL = os.environ.get("COPY_EMAIL")
 PENDING_SENDS = {}
 
 
@@ -318,7 +335,75 @@ def build_email_preview(item):
         "Спасибо."
     )
 
+def build_email_body(item):
+    total_sum = f"{item['total_sum']:,.2f}".replace(",", " ")
 
+    invoices_text = ""
+
+    for invoice in item["invoices"]:
+        inv_sum = f"{invoice['amount']:,.2f}".replace(",", " ")
+
+        invoices_text += (
+            f"Счет №{invoice['invoice_number']} от {invoice['invoice_date']} — "
+            f"{inv_sum} руб., просрочен на {invoice['days_overdue']} дней.\n"
+        )
+
+    return (
+        "Добрый день!\n\n"
+        "Ниже направляем информацию о дебиторской задолженности по вашей компании.\n\n"
+        f"Общая сумма задолженности составляет: {total_sum} руб.\n\n"
+        f"{invoices_text}\n"
+        "Просим проверить информацию и сообщить планируемую дату оплаты.\n\n"
+        "По всем вопросам вы можете обратиться к своему менеджеру.\n\n"
+        "Спасибо."
+    )
+
+
+def send_email(to_email, subject, body):
+    msg = MIMEText(body, "plain", "utf-8")
+
+    msg["Subject"] = Header(subject, "utf-8")
+    msg["From"] = f"{EMAIL_FROM_NAME} <{EMAIL_FROM}>"
+    msg["To"] = to_email
+
+    recipients = [to_email]
+
+    if COPY_EMAIL:
+        msg["Cc"] = COPY_EMAIL
+        recipients.append(COPY_EMAIL)
+
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+        server.starttls()
+        server.login(SMTP_USER, SMTP_PASSWORD)
+        server.sendmail(
+            EMAIL_FROM,
+            recipients,
+            msg.as_string()
+        )
+
+
+def send_mailing(ready):
+    sent = 0
+    errors = []
+
+    for item in ready:
+        try:
+            body = build_email_body(item)
+
+            send_email(
+                item["email"],
+                EMAIL_SUBJECT,
+                body
+            )
+
+            sent += 1
+
+        except Exception as e:
+            errors.append(
+                f"{item['client']} → {item['email']} : {e}"
+            )
+
+    return sent, errors
 def build_confirm_keyboard():
     return {
         "inline_keyboard": [
@@ -359,12 +444,26 @@ def webhook():
 
             ready = pending.get("ready", [])
 
-            send_message(
-                chat_id,
-                "Рассылка подтверждена ✅\n\n"
-                f"Готово к отправке писем: {len(ready)}\n\n"
-                "На следующем шаге подключим реальную отправку email."
+            if not ready:
+                send_message(chat_id, "Нет клиентов, готовых к рассылке.")
+                return "ok"
+
+            send_message(chat_id, "Рассылку подтвердила. Начинаю отправку писем...")
+
+            sent, errors = send_mailing(ready)
+
+            PENDING_SENDS.pop(str(chat_id), None)
+
+            result_text = (
+                "Рассылка завершена ✅\n\n"
+                f"Отправлено писем: {sent}\n"
+                f"Ошибок: {len(errors)}"
             )
+
+            if errors:
+                result_text += "\n\nОшибки:\n" + "\n".join(errors[:10])
+
+            send_message(chat_id, result_text)
             return "ok"
 
         return "ok"
