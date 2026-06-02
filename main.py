@@ -404,6 +404,32 @@ def send_mailing(ready):
             )
 
     return sent, errors
+from datetime import datetime
+
+
+def write_mailing_to_sheet(ready):
+    sheet = get_google_sheet()
+    ws = sheet.worksheet("РАССЫЛКА")
+
+    rows = []
+
+    for item in ready:
+        body = build_email_body(item)
+
+        rows.append([
+            datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
+            item["client"],
+            item["email"],
+            EMAIL_SUBJECT,
+            body,
+            "Готово к отправке",
+            ""
+        ])
+
+    if rows:
+        ws.append_rows(rows, value_input_option="USER_ENTERED")
+
+    return len(rows)
 def build_confirm_keyboard():
     return {
         "inline_keyboard": [
@@ -455,18 +481,15 @@ def webhook():
             PROCESSING_SENDS.add(chat_key)
 
             try:
-                send_message(chat_id, "НОВАЯ ВЕРСИЯ ✅ Начинаю отправку писем...")
+                send_message(chat_id, "Подготавливаю письма...")
 
-                sent, errors = send_mailing(ready)
+                prepared_count = write_mailing_to_sheet(ready)
 
                 result_text = (
-                    "Рассылка завершена ✅\n\n"
-                    f"Отправлено писем: {sent}\n"
-                    f"Ошибок: {len(errors)}"
+                    "Письма подготовлены ✅\n\n"
+                    f"Добавлено в лист РАССЫЛКА: {prepared_count}\n\n"
+                    "Следующий шаг: отправка писем через Google Apps Script."
                 )
-
-                if errors:
-                    result_text += "\n\nОшибки:\n" + "\n".join(errors[:10])
 
                 send_message(chat_id, result_text)
 
