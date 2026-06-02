@@ -430,6 +430,26 @@ def write_mailing_to_sheet(ready):
         ws.append_rows(rows, value_input_option="USER_ENTERED")
 
     return len(rows)
+    def trigger_apps_script_send():
+    apps_script_url = os.environ.get("APPS_SCRIPT_URL")
+    apps_script_secret = os.environ.get("APPS_SCRIPT_SECRET")
+
+    if not apps_script_url or not apps_script_secret:
+        raise Exception(
+            "Не заполнены APPS_SCRIPT_URL или APPS_SCRIPT_SECRET"
+        )
+
+    response = requests.post(
+        apps_script_url,
+        json={
+            "secret": apps_script_secret
+        },
+        timeout=60
+    )
+
+    response.raise_for_status()
+
+    return response.json()
 def build_confirm_keyboard():
     return {
         "inline_keyboard": [
