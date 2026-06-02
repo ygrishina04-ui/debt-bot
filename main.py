@@ -16,7 +16,7 @@ GOOGLE_SHEET_ID = os.environ.get("GOOGLE_SHEET_ID")
 GOOGLE_SERVICE_ACCOUNT_EMAIL = os.environ.get("GOOGLE_SERVICE_ACCOUNT_EMAIL")
 GOOGLE_PRIVATE_KEY = os.environ.get("GOOGLE_PRIVATE_KEY")
 SMTP_HOST = os.environ.get("SMTP_HOST")
-SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "465"))
 
 SMTP_USER = os.environ.get("SMTP_USER")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
@@ -373,8 +373,7 @@ def send_email(to_email, subject, body):
         msg["Cc"] = COPY_EMAIL
         recipients.append(COPY_EMAIL)
 
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-        server.starttls()
+    with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=20) as server:
         server.login(SMTP_USER, SMTP_PASSWORD)
         server.sendmail(
             EMAIL_FROM,
