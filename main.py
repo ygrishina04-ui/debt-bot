@@ -440,13 +440,11 @@ def webhook():
             chat_key = str(chat_id)
 
             if chat_key in PROCESSING_SENDS:
-                send_message(chat_id, "НОВАЯ ВЕРСИЯ: начинаю отправку писем...")
                 return "ok"
 
             pending = PENDING_SENDS.get(chat_key)
 
             if not pending:
-                send_message(chat_id, "Нет подготовленной рассылки. Сначала загрузите файл.")
                 return "ok"
 
             ready = pending.get("ready", [])
@@ -458,7 +456,7 @@ def webhook():
             PROCESSING_SENDS.add(chat_key)
 
             try:
-                send_message(chat_id, "Рассылку подтвердила. Начинаю отправку писем...")
+                send_message(chat_id, "НОВАЯ ВЕРСИЯ ✅ Начинаю отправку писем...")
 
                 sent, errors = send_mailing(ready)
 
