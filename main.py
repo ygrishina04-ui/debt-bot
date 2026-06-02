@@ -345,11 +345,11 @@ def build_email_body(item):
         days = int(invoice["days_overdue"])
 
         if days < 0:
-        status_text = f"просрочен на {abs(days)} дней"
+            status_text = f"просрочен на {abs(days)} дней"
         elif days > 0:
-        status_text = f"до оплаты {days} дней"
+            status_text = f"до оплаты {days} дней"
         else:
-        status_text = "срок оплаты сегодня"
+            status_text = "срок оплаты сегодня"
 
         invoices_text += (
             f"Счет №{invoice['invoice_number']} от {invoice['invoice_date']} — "
