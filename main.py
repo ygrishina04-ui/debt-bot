@@ -500,7 +500,7 @@ def webhook():
                 send_message(chat_id, "Нет клиентов, готовых к рассылке.")
                 return "ok"
 
-                        PROCESSING_SENDS.add(chat_key)
+            PROCESSING_SENDS.add(chat_key)
 
             try:
                 send_message(chat_id, "Подготавливаю письма...")
