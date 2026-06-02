@@ -31,6 +31,7 @@ EMAIL_SUBJECT = os.environ.get(
 
 COPY_EMAIL = os.environ.get("COPY_EMAIL")
 PENDING_SENDS = {}
+PROCESSING_SENDS = set()
 
 
 @app.route("/")
@@ -436,7 +437,13 @@ def webhook():
             return "ok"
 
         if action == "confirm_send":
-            pending = PENDING_SENDS.get(str(chat_id))
+            chat_key = str(chat_id)
+
+            if chat_key in PROCESSING_SENDS:
+                send_message(chat_id, "Рассылка уже выполняется, повторно запускать не нужно.")
+                return "ok"
+
+            pending = PENDING_SENDS.get(chat_key)
 
             if not pending:
                 send_message(chat_id, "Нет подготовленной рассылки. Сначала загрузите файл.")
@@ -448,25 +455,30 @@ def webhook():
                 send_message(chat_id, "Нет клиентов, готовых к рассылке.")
                 return "ok"
 
-            send_message(chat_id, "Рассылку подтвердила. Начинаю отправку писем...")
+            PROCESSING_SENDS.add(chat_key)
 
-            sent, errors = send_mailing(ready)
+            try:
+                send_message(chat_id, "Рассылку подтвердила. Начинаю отправку писем...")
 
-            PENDING_SENDS.pop(str(chat_id), None)
+                sent, errors = send_mailing(ready)
 
-            result_text = (
-                "Рассылка завершена ✅\n\n"
-                f"Отправлено писем: {sent}\n"
-                f"Ошибок: {len(errors)}"
-            )
+                result_text = (
+                    "Рассылка завершена ✅\n\n"
+                    f"Отправлено писем: {sent}\n"
+                    f"Ошибок: {len(errors)}"
+                )
 
-            if errors:
-                result_text += "\n\nОшибки:\n" + "\n".join(errors[:10])
+                if errors:
+                    result_text += "\n\nОшибки:\n" + "\n".join(errors[:10])
 
-            send_message(chat_id, result_text)
+                send_message(chat_id, result_text)
+
+                PENDING_SENDS.pop(chat_key, None)
+
+            finally:
+                PROCESSING_SENDS.discard(chat_key)
+
             return "ok"
-
-        return "ok"
 
     message = data.get("message", {})
     chat = message.get("chat", {})
