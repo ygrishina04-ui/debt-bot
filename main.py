@@ -500,9 +500,9 @@ def webhook():
                 send_message(chat_id, "Нет клиентов, готовых к рассылке.")
                 return "ok"
 
-            PROCESSING_SENDS.add(chat_key)
+                        PROCESSING_SENDS.add(chat_key)
 
-                        try:
+            try:
                 send_message(chat_id, "Подготавливаю письма...")
 
                 prepared_count = write_mailing_to_sheet(ready)
@@ -526,8 +526,16 @@ def webhook():
 
                 PENDING_SENDS.pop(chat_key, None)
 
-            return "ok"
+            except Exception as e:
+                send_message(
+                    chat_id,
+                    f"Ошибка при автоматической отправке:\n{e}"
+                )
 
+            finally:
+                PROCESSING_SENDS.discard(chat_key)
+
+            return "ok"
     message = data.get("message", {})
     chat = message.get("chat", {})
     chat_id = chat.get("id")
