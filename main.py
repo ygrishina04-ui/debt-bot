@@ -340,12 +340,21 @@ def build_email_body(item):
     invoices_text = ""
 
     for invoice in item["invoices"]:
-        inv_sum = f"{invoice['amount']:,.2f}".replace(",", " ")
+    inv_sum = f"{invoice['amount']:,.2f}".replace(",", " ")
 
-        invoices_text += (
-            f"Счет №{invoice['invoice_number']} от {invoice['invoice_date']} — "
-            f"{inv_sum} руб., просрочен на {invoice['days_overdue']} дней.\n"
-        )
+    days = int(invoice["days_overdue"])
+
+    if days < 0:
+        status_text = f"просрочен на {abs(days)} дней"
+    elif days > 0:
+        status_text = f"до оплаты {days} дней"
+    else:
+        status_text = "срок оплаты сегодня"
+
+    invoices_text += (
+        f"Счет №{invoice['invoice_number']} от {invoice['invoice_date']} — "
+        f"{inv_sum} руб., {status_text}.\n"
+    )
 
     return (
         "Добрый день!\n\n"
