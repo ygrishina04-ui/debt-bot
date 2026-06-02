@@ -107,6 +107,36 @@ def get_clients_base():
     return base
 
 
+def parse_amount(value):
+    if value in [None, ""]:
+        return 0
+
+    try:
+        return float(str(value).replace(" ", "").replace(",", "."))
+    except Exception:
+        return 0
+
+
+def parse_days(value):
+    if value in [None, ""]:
+        return 0
+
+    try:
+        return abs(int(float(str(value).replace(" ", "").replace(",", "."))))
+    except Exception:
+        return 0
+
+
+def format_date(value):
+    if value in [None, ""]:
+        return ""
+
+    if hasattr(value, "strftime"):
+        return value.strftime("%d.%m.%Y")
+
+    return str(value)
+
+
 def analyze_excel(file_content):
     clients_base = get_clients_base()
 
@@ -120,64 +150,93 @@ def analyze_excel(file_content):
 
         headers = [cell.value for cell in ws[1]]
 
-        if "Клиент" not in headers or "Сумма задолженности" not in headers:
+        required = [
+            "Плательщик",
+            "Номер счета",
+            "Дата счета",
+            "Сумма, не закрытая платежными поручениями",
+            "Дней до оплаты",
+        ]
+
+        missing = [col for col in required if col not in headers]
+
+        if missing:
             return {
                 "error": (
-                    "В файле должны быть колонки:\n"
-                    "Клиент\n"
-                    "Сумма задолженности"
+                    "В файле не хватает колонок:\n"
+                    + "\n".join(missing)
+                    + "\n\nПроверь точные названия заголовков."
                 )
             }
 
-        client_idx = headers.index("Клиент") + 1
-        sum_idx = headers.index("Сумма задолженности") + 1
+        payer_idx = headers.index("Плательщик") + 1
+        invoice_idx = headers.index("Номер счета") + 1
+        date_idx = headers.index("Дата счета") + 1
+        amount_idx = headers.index("Сумма, не закрытая платежными поручениями") + 1
+        days_idx = headers.index("Дней до оплаты") + 1
 
-        total_clients = 0
+        grouped = {}
+        total_rows = 0
         total_sum = 0
+
+        for row in range(2, ws.max_row + 1):
+            payer = ws.cell(row=row, column=payer_idx).value
+            invoice_number = ws.cell(row=row, column=invoice_idx).value
+            invoice_date = ws.cell(row=row, column=date_idx).value
+            amount = ws.cell(row=row, column=amount_idx).value
+            days_to_pay = ws.cell(row=row, column=days_idx).value
+
+            if not payer:
+                continue
+
+            amount_num = parse_amount(amount)
+
+            if amount_num <= 0:
+                continue
+
+            total_rows += 1
+            total_sum += amount_num
+
+            norm_payer = normalize_client(payer)
+
+            if norm_payer not in grouped:
+                grouped[norm_payer] = {
+                    "client": str(payer).strip(),
+                    "total_sum": 0,
+                    "invoices": [],
+                }
+
+            grouped[norm_payer]["total_sum"] += amount_num
+            grouped[norm_payer]["invoices"].append({
+                "invoice_number": str(invoice_number or "").strip(),
+                "invoice_date": format_date(invoice_date),
+                "amount": amount_num,
+                "days_overdue": parse_days(days_to_pay),
+            })
 
         ready = []
         no_email = []
         not_found = []
 
-        for row in range(2, ws.max_row + 1):
-            client = ws.cell(row=row, column=client_idx).value
-            amount = ws.cell(row=row, column=sum_idx).value
-
-            if not client or amount in [None, ""]:
-                continue
-
-            try:
-                amount_num = float(str(amount).replace(" ", "").replace(",", "."))
-            except Exception:
-                continue
-
-            if amount_num <= 0:
-                continue
-
-            total_clients += 1
-            total_sum += amount_num
-
-            norm_client = normalize_client(client)
+        for norm_client, data in grouped.items():
             base_item = clients_base.get(norm_client)
 
             if not base_item:
-                not_found.append({"client": str(client), "amount": amount_num})
+                not_found.append(data)
                 continue
 
             email = base_item.get("email", "")
 
             if not email:
-                no_email.append({"client": str(client), "amount": amount_num})
+                no_email.append(data)
                 continue
 
-            ready.append({
-                "client": str(client),
-                "amount": amount_num,
-                "email": email,
-            })
+            data["email"] = email
+            ready.append(data)
 
         return {
-            "total_clients": total_clients,
+            "total_clients": len(grouped),
+            "total_rows": total_rows,
             "total_sum": total_sum,
             "ready": ready,
             "no_email": no_email,
@@ -199,6 +258,7 @@ def build_report(result):
     text = (
         "Файл прочитан ✅\n\n"
         f"Клиентов с задолженностью: {result['total_clients']}\n"
+        f"Строк/счетов с задолженностью: {result['total_rows']}\n"
         f"Общая сумма: {result['total_sum']:,.2f} руб.\n\n"
         f"✅ Готово к рассылке: {len(ready)}\n"
         f"⚠️ Клиент найден, но нет почты: {len(no_email)}\n"
@@ -208,17 +268,20 @@ def build_report(result):
     if ready:
         text += "\n\nПервые готовые к рассылке:\n"
         for item in ready[:10]:
-            text += f"• {item['client']}: {item['amount']:,.2f} руб. → {item['email']}\n".replace(",", " ")
+            text += (
+                f"• {item['client']}: {item['total_sum']:,.2f} руб. "
+                f"→ {item['email']}\n"
+            ).replace(",", " ")
 
     if no_email:
         text += "\n\n⚠️ Нет почты:\n"
         for item in no_email[:10]:
-            text += f"• {item['client']}: {item['amount']:,.2f} руб.\n".replace(",", " ")
+            text += f"• {item['client']}: {item['total_sum']:,.2f} руб.\n".replace(",", " ")
 
     if not_found:
         text += "\n\n❌ Нет в базе:\n"
         for item in not_found[:10]:
-            text += f"• {item['client']}: {item['amount']:,.2f} руб.\n".replace(",", " ")
+            text += f"• {item['client']}: {item['total_sum']:,.2f} руб.\n".replace(",", " ")
 
     if ready:
         text += "\n\nПроверьте список. Если все верно — подтвердите рассылку."
@@ -229,17 +292,29 @@ def build_report(result):
 
 
 def build_email_preview(item):
-    amount = f"{item['amount']:,.2f}".replace(",", " ")
+    total_sum = f"{item['total_sum']:,.2f}".replace(",", " ")
+
+    invoices_text = ""
+
+    for invoice in item["invoices"]:
+        inv_sum = f"{invoice['amount']:,.2f}".replace(",", " ")
+
+        invoices_text += (
+            f"Счет №{invoice['invoice_number']} от {invoice['invoice_date']} — "
+            f"{inv_sum} руб., просрочен на {invoice['days_overdue']} дней.\n"
+        )
 
     return (
         f"Кому: {item['email']}\n"
         f"Клиент: {item['client']}\n"
-        f"Сумма: {amount} руб.\n\n"
+        f"Общая сумма: {total_sum} руб.\n\n"
         "Текст письма:\n"
         "Добрый день!\n\n"
-        f"По нашим данным, по вашей компании числится задолженность в размере {amount} руб.\n\n"
+        "Ниже направляем информацию о дебиторской задолженности по вашей компании.\n\n"
+        f"Общая сумма задолженности составляет: {total_sum} руб.\n\n"
+        f"{invoices_text}\n"
         "Просим проверить информацию и сообщить планируемую дату оплаты.\n\n"
-        "Если оплата уже произведена, просим направить платежное поручение в ответ на данное письмо.\n\n"
+        "По всем вопросам вы можете обратиться к своему менеджеру.\n\n"
         "Спасибо."
     )
 
@@ -312,7 +387,8 @@ def webhook():
             chat_id,
             "Загрузите Excel-файл с дебиторской задолженностью.\n\n"
             "Обязательные колонки:\n"
-            "Клиент | Сумма задолженности\n\n"
+            "Плательщик | Номер счета | Дата счета | "
+            "Сумма, не закрытая платежными поручениями | Дней до оплаты\n\n"
             "Почта подтянется из листа БАЗА_КЛИЕНТОВ."
         )
         return "ok"
