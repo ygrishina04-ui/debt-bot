@@ -430,7 +430,8 @@ def write_mailing_to_sheet(ready):
         ws.append_rows(rows, value_input_option="USER_ENTERED")
 
     return len(rows)
-    def trigger_apps_script_send():
+    
+def trigger_apps_script_send():
     apps_script_url = os.environ.get("APPS_SCRIPT_URL")
     apps_script_secret = os.environ.get("APPS_SCRIPT_SECRET")
 
@@ -450,6 +451,7 @@ def write_mailing_to_sheet(ready):
     response.raise_for_status()
 
     return response.json()
+
 def build_confirm_keyboard():
     return {
         "inline_keyboard": [
@@ -500,23 +502,29 @@ def webhook():
 
             PROCESSING_SENDS.add(chat_key)
 
-            try:
+                        try:
                 send_message(chat_id, "Подготавливаю письма...")
 
                 prepared_count = write_mailing_to_sheet(ready)
 
-                result_text = (
+                send_message(
+                    chat_id,
                     "Письма подготовлены ✅\n\n"
                     f"Добавлено в лист РАССЫЛКА: {prepared_count}\n\n"
-                    "Следующий шаг: отправка писем через Google Apps Script."
+                    "Запускаю отправку писем..."
+                )
+
+                script_result = trigger_apps_script_send()
+
+                result_text = (
+                    "Рассылка завершена ✅\n\n"
+                    f"Отправлено писем: {script_result.get('sent', 0)}\n"
+                    f"Ошибок: {script_result.get('errors', 0)}"
                 )
 
                 send_message(chat_id, result_text)
 
                 PENDING_SENDS.pop(chat_key, None)
-
-            finally:
-                PROCESSING_SENDS.discard(chat_key)
 
             return "ok"
 
