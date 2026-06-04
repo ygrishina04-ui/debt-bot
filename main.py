@@ -333,7 +333,21 @@ def build_email_preview(item):
         f"{invoices_text}\n"
         "По всем вопросам вы можете обратиться к своему менеджеру.\n\n"
     )
+def format_days_word(days):
+    days = abs(int(days))
 
+    if 11 <= days % 100 <= 14:
+        return "дней"
+
+    last_digit = days % 10
+
+    if last_digit == 1:
+        return "день"
+    elif 2 <= last_digit <= 4:
+        return "дня"
+    else:
+        return "дней"
+        
 def build_email_body(item):
     total_sum = f"{item['total_sum']:,.2f}".replace(",", " ")
 
@@ -345,11 +359,12 @@ def build_email_body(item):
         days = int(invoice["days_overdue"])
 
         if days < 0:
-            status_text = f"просрочен на {abs(days)} дней"
+           days_abs = abs(days)
+           status_text = f"просрочен на {days_abs} {format_days_word(days_abs)}"
         elif days > 0:
-            status_text = f"до оплаты {days} дней"
+           status_text = f"до оплаты {days} {format_days_word(days)}"
         else:
-            status_text = "срок оплаты сегодня"
+           status_text = "срок оплаты сегодня"
 
         invoices_text += (
             f"Счет №{invoice['invoice_number']} от {invoice['invoice_date']} — "
