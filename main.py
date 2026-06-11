@@ -500,6 +500,32 @@ def webhook():
         answer_callback(callback_id)
 
         if action == "cancel_send":
+                    if action == "cancel_bulk":
+            BULK_SENDS.pop(str(chat_id), None)
+            send_message(chat_id, "Массовая рассылка отменена ❌")
+            return "ok"
+
+        if action == "confirm_bulk":
+            bulk = BULK_SENDS.get(str(chat_id))
+
+            if not bulk:
+                return "ok"
+
+            clients = bulk.get("clients", [])
+            subject = bulk.get("subject")
+            body = bulk.get("body")
+
+            prepared_count = write_bulk_mailing_to_sheet(clients, subject, body)
+
+            send_message(
+                chat_id,
+                "Массовая рассылка подготовлена ✅\n\n"
+                f"Добавлено в лист МАССОВАЯ_РАССЫЛКА: {prepared_count}\n\n"
+                "Теперь нужно запустить отправку из Apps Script."
+            )
+
+            BULK_SENDS.pop(str(chat_id), None)
+            return "ok"
             PENDING_SENDS.pop(str(chat_id), None)
             send_message(chat_id, "Рассылка отменена ❌")
             return "ok"
