@@ -580,7 +580,18 @@ def webhook():
             "Почта подтянется из листа БАЗА_КЛИЕНТОВ."
         )
         return "ok"
+    if text == "/рассылка":
+        BULK_SENDS[str(chat_id)] = {
+            "step": "waiting_text"
+        }
 
+        send_message(
+            chat_id,
+            "Отправьте текст письма для массовой рассылки клиентам.\n\n"
+            "Первая строка будет темой письма.\n"
+            "Остальной текст — телом письма."
+        )
+        return "ok"
     if document:
         file_name = document.get("file_name", "")
 
@@ -611,7 +622,51 @@ def webhook():
             send_message(chat_id, f"Ошибка при обработке файла:\n{e}")
 
         return "ok"
+    bulk = BULK_SENDS.get(str(chat_id))
 
+    if bulk and bulk.get("step") == "waiting_text" and text:
+        lines = text.strip().split("\n")
+        subject = lines[0].strip()
+        body = "\n".join(lines[1:]).strip()
+
+        if not subject or not body:
+            send_message(
+                chat_id,
+                "Не вижу тему или текст письма.\n\n"
+                "Формат:\n"
+                "Тема письма\n"
+                "Текст письма..."
+            )
+            return "ok"
+
+        clients = get_all_clients_for_bulk()
+
+        BULK_SENDS[str(chat_id)] = {
+            "step": "confirm",
+            "subject": subject,
+            "body": body,
+            "clients": clients
+        }
+
+        preview = (
+            "Предпросмотр массовой рассылки:\n\n"
+            f"Тема: {subject}\n"
+            f"Получателей: {len(clients)}\n\n"
+            "Текст:\n"
+            f"{body[:1500]}"
+        )
+
+        keyboard = {
+            "inline_keyboard": [
+                [
+                    {"text": "✅ Отправить всем", "callback_data": "confirm_bulk"},
+                    {"text": "❌ Отменить", "callback_data": "cancel_bulk"},
+                ]
+            ]
+        }
+
+        send_message(chat_id, preview, reply_markup=keyboard)
+        return "ok"
     send_message(chat_id, "Я получил сообщение ✅\n\nПока понимаю команду: /дебиторка")
     return "ok"
     BULK_SENDS = {}
