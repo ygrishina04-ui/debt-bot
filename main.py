@@ -1,37 +1,31 @@
 import os
 import tempfile
+from datetime import datetime
+
 from flask import Flask, request
 import requests
 from openpyxl import load_workbook
 import gspread
 from google.oauth2.service_account import Credentials
-import smtplib
-from email.mime.text import MIMEText
-from email.header import Header
+
 
 app = Flask(__name__)
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
+
 GOOGLE_SHEET_ID = os.environ.get("GOOGLE_SHEET_ID")
 GOOGLE_SERVICE_ACCOUNT_EMAIL = os.environ.get("GOOGLE_SERVICE_ACCOUNT_EMAIL")
 GOOGLE_PRIVATE_KEY = os.environ.get("GOOGLE_PRIVATE_KEY")
-SMTP_HOST = os.environ.get("SMTP_HOST")
-SMTP_PORT = int(os.environ.get("SMTP_PORT", "465"))
-
-SMTP_USER = os.environ.get("SMTP_USER")
-SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
-
-EMAIL_FROM = os.environ.get("EMAIL_FROM")
-EMAIL_FROM_NAME = os.environ.get("EMAIL_FROM_NAME", "ООО Инвиктика")
 
 EMAIL_SUBJECT = os.environ.get(
     "EMAIL_SUBJECT",
     "Информация о дебиторской задолженности"
 )
 
-COPY_EMAIL = os.environ.get("COPY_EMAIL")
 PENDING_SENDS = {}
 PROCESSING_SENDS = set()
+
+BULK_SENDS = {}
 
 
 @app.route("/")
@@ -41,7 +35,10 @@ def index():
 
 def send_message(chat_id, text, reply_markup=None):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": chat_id, "text": text}
+    payload = {
+        "chat_id": chat_id,
+        "text": text
+    }
 
     if reply_markup:
         payload["reply_markup"] = reply_markup
@@ -70,20 +67,6 @@ def get_telegram_file(file_id):
     return file_response.content
 
 
-def normalize_client(name):
-    return (
-        str(name)
-        .strip()
-        .lower()
-        .replace("«", "")
-        .replace("»", "")
-        .replace('"', "")
-        .replace("ооо ", "")
-        .replace("ип ", "")
-        .replace("  ", " ")
-    )
-
-
 def get_google_sheet():
     private_key = GOOGLE_PRIVATE_KEY.replace("\\n", "\n")
 
@@ -105,24 +88,18 @@ def get_google_sheet():
     return client.open_by_key(GOOGLE_SHEET_ID)
 
 
-def get_clients_base():
-    sheet = get_google_sheet()
-    ws = sheet.worksheet("БАЗА_КЛИЕНТОВ")
-    rows = ws.get_all_records()
-
-    base = {}
-
-    for row in rows:
-        client = str(row.get("Клиент", "")).strip()
-        email = str(row.get("Почта", "")).strip()
-
-        if client:
-            base[normalize_client(client)] = {
-                "client": client,
-                "email": email,
-            }
-
-    return base
+def normalize_client(name):
+    return (
+        str(name)
+        .strip()
+        .lower()
+        .replace("«", "")
+        .replace("»", "")
+        .replace('"', "")
+        .replace("ооо ", "")
+        .replace("ип ", "")
+        .replace("  ", " ")
+    )
 
 
 def parse_amount(value):
@@ -153,6 +130,62 @@ def format_date(value):
         return value.strftime("%d.%m.%Y")
 
     return str(value)
+
+
+def format_days_word(days):
+    days = abs(int(days))
+
+    if 11 <= days % 100 <= 14:
+        return "дней"
+
+    last_digit = days % 10
+
+    if last_digit == 1:
+        return "день"
+    elif 2 <= last_digit <= 4:
+        return "дня"
+    else:
+        return "дней"
+
+
+def get_clients_base():
+    sheet = get_google_sheet()
+    ws = sheet.worksheet("БАЗА_КЛИЕНТОВ")
+    rows = ws.get_all_records()
+
+    base = {}
+
+    for row in rows:
+        client = str(row.get("Клиент", "")).strip()
+        email = str(row.get("Почта", "")).strip()
+
+        if client:
+            base[normalize_client(client)] = {
+                "client": client,
+                "email": email,
+            }
+
+    return base
+
+
+def get_all_clients_for_bulk():
+    sheet = get_google_sheet()
+    ws = sheet.worksheet("БАЗА_КЛИЕНТОВ")
+    rows = ws.get_all_records()
+
+    clients = []
+
+    for row in rows:
+        client = str(row.get("Клиент", "")).strip()
+        email = str(row.get("Почта", "")).strip()
+
+        if client and email:
+            clients.append({
+                "client": client,
+                "email": email
+            })
+
+    return clients
 
 
 def analyze_excel(file_content):
@@ -229,7 +262,7 @@ def analyze_excel(file_content):
                 "invoice_number": str(invoice_number or "").strip(),
                 "invoice_date": format_date(invoice_date),
                 "amount": amount_num,
-                "days_overdue": parse_days(days_to_pay),
+                "days_to_pay": parse_days(days_to_pay),
             })
 
         ready = []
@@ -309,18 +342,32 @@ def build_report(result):
     return text
 
 
-def build_email_preview(item):
-    total_sum = f"{item['total_sum']:,.2f}".replace(",", " ")
-
+def build_invoice_lines(item):
     invoices_text = ""
 
     for invoice in item["invoices"]:
         inv_sum = f"{invoice['amount']:,.2f}".replace(",", " ")
+        days = int(invoice["days_to_pay"])
+
+        if days < 0:
+            days_abs = abs(days)
+            status_text = f"просрочен на {days_abs} {format_days_word(days_abs)}"
+        elif days > 0:
+            status_text = f"до оплаты {days} {format_days_word(days)}"
+        else:
+            status_text = "срок оплаты сегодня"
 
         invoices_text += (
             f"Счет №{invoice['invoice_number']} от {invoice['invoice_date']} — "
-            f"{inv_sum} руб., просрочен на {invoice['days_overdue']} дней.\n"
+            f"{inv_sum} руб., {status_text}.\n"
         )
+
+    return invoices_text
+
+
+def build_email_preview(item):
+    total_sum = f"{item['total_sum']:,.2f}".replace(",", " ")
+    invoices_text = build_invoice_lines(item)
 
     return (
         f"Кому: {item['email']}\n"
@@ -332,44 +379,13 @@ def build_email_preview(item):
         f"Общая сумма задолженности составляет: {total_sum} руб.\n\n"
         f"{invoices_text}\n"
         "По всем вопросам вы можете обратиться к своему менеджеру.\n\n"
+        "Спасибо."
     )
-def format_days_word(days):
-    days = abs(int(days))
 
-    if 11 <= days % 100 <= 14:
-        return "дней"
 
-    last_digit = days % 10
-
-    if last_digit == 1:
-        return "день"
-    elif 2 <= last_digit <= 4:
-        return "дня"
-    else:
-        return "дней"
-        
 def build_email_body(item):
     total_sum = f"{item['total_sum']:,.2f}".replace(",", " ")
-
-    invoices_text = ""
-
-    for invoice in item["invoices"]:
-        inv_sum = f"{invoice['amount']:,.2f}".replace(",", " ")
-
-        days = int(invoice["days_overdue"])
-
-        if days < 0:
-           days_abs = abs(days)
-           status_text = f"просрочен на {days_abs} {format_days_word(days_abs)}"
-        elif days > 0:
-           status_text = f"до оплаты {days} {format_days_word(days)}"
-        else:
-           status_text = "срок оплаты сегодня"
-
-        invoices_text += (
-            f"Счет №{invoice['invoice_number']} от {invoice['invoice_date']} — "
-            f"{inv_sum} руб., {status_text}.\n"
-        )
+    invoices_text = build_invoice_lines(item)
 
     return (
         "Добрый день!\n\n"
@@ -379,53 +395,6 @@ def build_email_body(item):
         "По всем вопросам вы можете обратиться к своему менеджеру.\n\n"
         "Спасибо."
     )
-
-
-def send_email(to_email, subject, body):
-    msg = MIMEText(body, "plain", "utf-8")
-
-    msg["Subject"] = Header(subject, "utf-8")
-    msg["From"] = f"{EMAIL_FROM_NAME} <{EMAIL_FROM}>"
-    msg["To"] = to_email
-
-    recipients = [to_email]
-
-    if COPY_EMAIL:
-        msg["Cc"] = COPY_EMAIL
-        recipients.append(COPY_EMAIL)
-
-    with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=20) as server:
-        server.login(SMTP_USER, SMTP_PASSWORD)
-        server.sendmail(
-            EMAIL_FROM,
-            recipients,
-            msg.as_string()
-        )
-
-
-def send_mailing(ready):
-    sent = 0
-    errors = []
-
-    for item in ready:
-        try:
-            body = build_email_body(item)
-
-            send_email(
-                item["email"],
-                EMAIL_SUBJECT,
-                body
-            )
-
-            sent += 1
-
-        except Exception as e:
-            errors.append(
-                f"{item['client']} → {item['email']} : {e}"
-            )
-
-    return sent, errors
-from datetime import datetime
 
 
 def write_mailing_to_sheet(ready):
@@ -451,27 +420,47 @@ def write_mailing_to_sheet(ready):
         ws.append_rows(rows, value_input_option="USER_ENTERED")
 
     return len(rows)
-    
+
+
+def write_bulk_mailing_to_sheet(clients, subject, body):
+    sheet = get_google_sheet()
+    ws = sheet.worksheet("МАССОВАЯ_РАССЫЛКА")
+
+    rows = []
+
+    for item in clients:
+        rows.append([
+            datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
+            item["client"],
+            item["email"],
+            subject,
+            body,
+            "Готово к отправке",
+            ""
+        ])
+
+    if rows:
+        ws.append_rows(rows, value_input_option="USER_ENTERED")
+
+    return len(rows)
+
+
 def trigger_apps_script_send():
     apps_script_url = os.environ.get("APPS_SCRIPT_URL")
     apps_script_secret = os.environ.get("APPS_SCRIPT_SECRET")
 
     if not apps_script_url or not apps_script_secret:
-        raise Exception(
-            "Не заполнены APPS_SCRIPT_URL или APPS_SCRIPT_SECRET"
-        )
+        raise Exception("Не заполнены APPS_SCRIPT_URL или APPS_SCRIPT_SECRET")
 
     response = requests.post(
         apps_script_url,
-        json={
-            "secret": apps_script_secret
-        },
+        json={"secret": apps_script_secret},
         timeout=60
     )
 
     response.raise_for_status()
-
     return response.json()
+
 
 def build_confirm_keyboard():
     return {
@@ -479,6 +468,17 @@ def build_confirm_keyboard():
             [
                 {"text": "✅ Подтвердить рассылку", "callback_data": "confirm_send"},
                 {"text": "❌ Отменить", "callback_data": "cancel_send"},
+            ]
+        ]
+    }
+
+
+def build_bulk_keyboard():
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "✅ Отправить всем", "callback_data": "confirm_bulk"},
+                {"text": "❌ Отменить", "callback_data": "cancel_bulk"},
             ]
         ]
     }
@@ -500,12 +500,16 @@ def webhook():
         answer_callback(callback_id)
 
         if action == "cancel_send":
-                    if action == "cancel_bulk":
+            PENDING_SENDS.pop(str(chat_id), None)
+            send_message(chat_id, "Рассылка отменена ❌")
+            return "ok"
+
+        if action == "cancel_bulk":
             BULK_SENDS.pop(str(chat_id), None)
             send_message(chat_id, "Массовая рассылка отменена ❌")
             return "ok"
 
-                if action == "confirm_bulk":
+        if action == "confirm_bulk":
             bulk = BULK_SENDS.get(str(chat_id))
 
             if not bulk:
@@ -521,7 +525,7 @@ def webhook():
                 chat_id,
                 "Массовая рассылка подготовлена ✅\n\n"
                 f"Добавлено в лист МАССОВАЯ_РАССЫЛКА: {prepared_count}\n\n"
-                "Теперь нужно запустить отправку из Apps Script."
+                "Теперь можно отправить письма из Apps Script."
             )
 
             BULK_SENDS.pop(str(chat_id), None)
@@ -567,19 +571,18 @@ def webhook():
                 )
 
                 send_message(chat_id, result_text)
-
                 PENDING_SENDS.pop(chat_key, None)
 
             except Exception as e:
-                send_message(
-                    chat_id,
-                    f"Ошибка при автоматической отправке:\n{e}"
-                )
+                send_message(chat_id, f"Ошибка при автоматической отправке:\n{e}")
 
             finally:
                 PROCESSING_SENDS.discard(chat_key)
 
             return "ok"
+
+        return "ok"
+
     message = data.get("message", {})
     chat = message.get("chat", {})
     chat_id = chat.get("id")
@@ -590,7 +593,13 @@ def webhook():
         return "ok"
 
     if text == "/start":
-        send_message(chat_id, "Привет! Я бот по дебиторской задолженности.\n\nКоманда: /дебиторка")
+        send_message(
+            chat_id,
+            "Привет! Я бот по дебиторской задолженности.\n\n"
+            "Команды:\n"
+            "/дебиторка — загрузить файл с дебиторкой\n"
+            "/рассылка — подготовить массовую рассылку"
+        )
         return "ok"
 
     if text == "/дебиторка":
@@ -603,6 +612,7 @@ def webhook():
             "Почта подтянется из листа БАЗА_КЛИЕНТОВ."
         )
         return "ok"
+
     if text == "/рассылка":
         BULK_SENDS[str(chat_id)] = {
             "step": "waiting_text"
@@ -611,10 +621,11 @@ def webhook():
         send_message(
             chat_id,
             "Отправьте текст письма для массовой рассылки клиентам.\n\n"
-            "Первая строка будет темой письма.\n"
-            "Остальной текст — телом письма."
+            "Первая строка — тема письма.\n"
+            "Остальной текст — тело письма."
         )
         return "ok"
+
     if document:
         file_name = document.get("file_name", "")
 
@@ -637,6 +648,7 @@ def webhook():
             send_message(chat_id, report, reply_markup=build_confirm_keyboard())
 
             ready = result.get("ready", [])
+
             if ready:
                 preview_text = "Предпросмотр первого письма:\n\n" + build_email_preview(ready[0])
                 send_message(chat_id, preview_text)
@@ -645,6 +657,7 @@ def webhook():
             send_message(chat_id, f"Ошибка при обработке файла:\n{e}")
 
         return "ok"
+
     bulk = BULK_SENDS.get(str(chat_id))
 
     if bulk and bulk.get("step") == "waiting_text" and text:
@@ -679,59 +692,14 @@ def webhook():
             f"{body[:1500]}"
         )
 
-        keyboard = {
-            "inline_keyboard": [
-                [
-                    {"text": "✅ Отправить всем", "callback_data": "confirm_bulk"},
-                    {"text": "❌ Отменить", "callback_data": "cancel_bulk"},
-                ]
-            ]
-        }
-
-        send_message(chat_id, preview, reply_markup=keyboard)
+        send_message(chat_id, preview, reply_markup=build_bulk_keyboard())
         return "ok"
-    send_message(chat_id, "Я получил сообщение ✅\n\nПока понимаю команду: /дебиторка")
+
+    send_message(
+        chat_id,
+        "Я получил сообщение ✅\n\n"
+        "Команды:\n"
+        "/дебиторка\n"
+        "/рассылка"
+    )
     return "ok"
-    BULK_SENDS = {}
-
-def get_all_clients_for_bulk():
-    sheet = get_google_sheet()
-    ws = sheet.worksheet("БАЗА_КЛИЕНТОВ")
-    rows = ws.get_all_records()
-
-    clients = []
-
-    for row in rows:
-        client = str(row.get("Клиент", "")).strip()
-        email = str(row.get("Почта", "")).strip()
-
-        if client and email:
-            clients.append({
-                "client": client,
-                "email": email
-            })
-
-    return clients
-
-
-def write_bulk_mailing_to_sheet(clients, subject, body):
-    sheet = get_google_sheet()
-    ws = sheet.worksheet("МАССОВАЯ_РАССЫЛКА")
-
-    rows = []
-
-    for item in clients:
-        rows.append([
-            datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
-            item["client"],
-            item["email"],
-            subject,
-            body,
-            "Готово к отправке",
-            ""
-        ])
-
-    if rows:
-        ws.append_rows(rows, value_input_option="USER_ENTERED")
-
-    return len(rows)
