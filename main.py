@@ -460,7 +460,23 @@ def trigger_apps_script_send():
 
     response.raise_for_status()
     return response.json()
+    
+def trigger_apps_script_send_bulk():
+    apps_script_url = os.environ.get("APPS_SCRIPT_URL")
+    apps_script_secret = os.environ.get("APPS_SCRIPT_SECRET")
 
+    response = requests.post(
+        apps_script_url,
+        json={
+            "secret": apps_script_secret,
+            "type": "bulk"
+        },
+        timeout=120
+    )
+
+    response.raise_for_status()
+
+    return response.json()
 
 def build_confirm_keyboard():
     return {
