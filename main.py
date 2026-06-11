@@ -519,13 +519,25 @@ def webhook():
             subject = bulk.get("subject")
             body = bulk.get("body")
 
-            prepared_count = write_bulk_mailing_to_sheet(clients, subject, body)
+            prepared_count = write_bulk_mailing_to_sheet(
+                clients,
+                subject,
+                body
+            )
 
             send_message(
                 chat_id,
-                "Массовая рассылка подготовлена ✅\n\n"
-                f"Добавлено в лист МАССОВАЯ_РАССЫЛКА: {prepared_count}\n\n"
-                "Теперь можно отправить письма из Apps Script."
+                "Подготавливаю массовую рассылку..."
+            )
+
+            script_result = trigger_apps_script_send_bulk()
+
+            send_message(
+                chat_id,
+                "Массовая рассылка завершена ✅\n\n"
+                f"Подготовлено: {prepared_count}\n"
+                f"Отправлено: {script_result.get('sent', 0)}\n"
+                f"Ошибок: {script_result.get('errors', 0)}"
             )
 
             BULK_SENDS.pop(str(chat_id), None)
