@@ -505,7 +505,7 @@ def webhook():
             send_message(chat_id, "Массовая рассылка отменена ❌")
             return "ok"
 
-        if action == "confirm_bulk":
+                if action == "confirm_bulk":
             bulk = BULK_SENDS.get(str(chat_id))
 
             if not bulk:
@@ -525,9 +525,6 @@ def webhook():
             )
 
             BULK_SENDS.pop(str(chat_id), None)
-            return "ok"
-            PENDING_SENDS.pop(str(chat_id), None)
-            send_message(chat_id, "Рассылка отменена ❌")
             return "ok"
 
         if action == "confirm_send":
