@@ -614,3 +614,46 @@ def webhook():
 
     send_message(chat_id, "Я получил сообщение ✅\n\nПока понимаю команду: /дебиторка")
     return "ok"
+    BULK_SENDS = {}
+
+def get_all_clients_for_bulk():
+    sheet = get_google_sheet()
+    ws = sheet.worksheet("БАЗА_КЛИЕНТОВ")
+    rows = ws.get_all_records()
+
+    clients = []
+
+    for row in rows:
+        client = str(row.get("Клиент", "")).strip()
+        email = str(row.get("Почта", "")).strip()
+
+        if client and email:
+            clients.append({
+                "client": client,
+                "email": email
+            })
+
+    return clients
+
+
+def write_bulk_mailing_to_sheet(clients, subject, body):
+    sheet = get_google_sheet()
+    ws = sheet.worksheet("МАССОВАЯ_РАССЫЛКА")
+
+    rows = []
+
+    for item in clients:
+        rows.append([
+            datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
+            item["client"],
+            item["email"],
+            subject,
+            body,
+            "Готово к отправке",
+            ""
+        ])
+
+    if rows:
+        ws.append_rows(rows, value_input_option="USER_ENTERED")
+
+    return len(rows)
